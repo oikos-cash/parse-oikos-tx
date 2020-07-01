@@ -4,6 +4,8 @@
 const TronWeb = require("tronweb");
 const ethers = require("ethers");
 
+const { getAllEvents } = require("./utils");
+
 const createTronWeb = () => {
   const HttpProvider = TronWeb.providers.HttpProvider;
   const fullNode = new HttpProvider("https://api.trongrid.io");
@@ -39,17 +41,55 @@ const decodeMethodCall = (tx) => {
   return res;
 };
 
+const allEvents = getAllEvents();
+const decodeEvents = (txInfo) => {
+  const events = txInfo.log.map((log, logIndex) => {
+    const topics = log.topics.join(",");
+
+    const abi = allEvents.find((source) =>
+      topics.includes(source.signatureHash)
+    );
+
+    // web3 has a bug when decoding logs with indexed params... so we use ethers JS
+    const iface = new ethers.utils.Interface([abi.abiSignature]);
+    const eventDescription = iface.parseLog({
+      data: `0x${log.data}`,
+      topics: log.topics.map((t) => `0x${t}`),
+      logIndex,
+    });
+
+    return eventDescription;
+  });
+  return events;
+};
+
 const start = async () => {
   const tronWeb = createTronWeb();
   const txId =
     "10747cb3c9ce3cdb403add7830afd22e7ad140a24eafccb7ec528d18838eafcc";
-  const tx = await tronWeb.trx.getTransaction(txId);
+  const [tx, txInfo] = await Promise.all([
+    tronWeb.trx.getTransaction(txId),
+    tronWeb.trx.getTransactionInfo(txId),
+  ]);
   // console.dir(tx, { depth: null });
   const [toAddress, value] = decodeMethodCall(tx);
 
+  const events = decodeEvents(txInfo);
   console.log({
     toAddress: TronWeb.address.fromHex(`41${toAddress.substring(2)}`),
     value: value.toString(),
+    blockNumber: txInfo.blockNumber,
+    log: txInfo.log,
+    events,
+    // txInfo,
+  });
+
+  events.forEach((ev) => {
+    console.log("---");
+    console.log(`${ev.name} Event`);
+    Object.keys(ev.args).forEach((argName) => {
+      console.log(`${argName} = ${ev.args[argName]}`);
+    });
   });
 };
 
